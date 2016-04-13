@@ -14,14 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.vrtoolkit.cardboard.samples.treasurehunt;
-
-import com.google.vrtoolkit.cardboard.CardboardActivity;
-import com.google.vrtoolkit.cardboard.CardboardView;
-import com.google.vrtoolkit.cardboard.Eye;
-import com.google.vrtoolkit.cardboard.HeadTransform;
-import com.google.vrtoolkit.cardboard.Viewport;
-import com.google.vrtoolkit.cardboard.audio.CardboardAudioEngine;
+package com.google.vrtoolkit.cardboard.samples;
 
 import android.content.Context;
 import android.opengl.GLES20;
@@ -29,6 +22,14 @@ import android.opengl.Matrix;
 import android.os.Bundle;
 import android.os.Vibrator;
 import android.util.Log;
+
+import com.google.vrtoolkit.cardboard.CardboardActivity;
+import com.google.vrtoolkit.cardboard.CardboardView;
+import com.google.vrtoolkit.cardboard.Eye;
+import com.google.vrtoolkit.cardboard.HeadTransform;
+import com.google.vrtoolkit.cardboard.Viewport;
+import com.google.vrtoolkit.cardboard.audio.CardboardAudioEngine;
+import com.google.vrtoolkit.cardboard.samples.treasurehunt.R;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -40,6 +41,8 @@ import java.nio.FloatBuffer;
 
 import javax.microedition.khronos.egl.EGLConfig;
 
+import common.TextureHelper;
+
 /**
  * A Cardboard sample application.
  * </p><p>
@@ -49,7 +52,7 @@ import javax.microedition.khronos.egl.EGLConfig;
  * randomly reposition the cube.
  */
 public class TreasureHuntActivity
-    extends CardboardActivity implements CardboardView.StereoRenderer {
+        extends CardboardActivity implements CardboardView.StereoRenderer {
   private static final String TAG = "TreasureHuntActivity";
 
   private static final float Z_NEAR = 0.1f;
@@ -121,6 +124,33 @@ public class TreasureHuntActivity
   private volatile int soundId = CardboardAudioEngine.INVALID_ID;
 
   /**
+   * Store our model data in a float buffer.
+   */
+  private FloatBuffer mCubeTextureCoordinates;
+
+  /**
+   * This will be used to pass in the texture.
+   */
+  private int mTextureUniformHandle;
+
+  /**
+   * This will be used to pass in model texture coordinate information.
+   */
+  private int mTextureCoordinateHandle;
+
+  /**
+   * Size of the texture coordinate data in elements.
+   */
+  private final int mTextureCoordinateDataSize = 2;
+
+  /**
+   * This is a handle to our texture data.
+   */
+  private int mTextureDataHandle;
+
+  private Boolean impression;
+
+  /**
    * Converts a raw text file, saved as a resource, into an OpenGL ES shader.
    *
    * @param type The type of shader we will be creating.
@@ -174,14 +204,16 @@ public class TreasureHuntActivity
 
     setContentView(R.layout.common_ui);
 
+    impression = false;
+
     CardboardView cardboardView = (CardboardView) findViewById(R.id.cardboard_view);
     cardboardView.setRenderer(this);
     cardboardView.setTransitionViewEnabled(true);
     cardboardView.setOnCardboardBackButtonListener(new Runnable() {
-        @Override
-        public void run() {
-          onBackPressed();
-        }
+      @Override
+      public void run() {
+        onBackPressed();
+      }
     });
     setCardboardView(cardboardView);
 
@@ -199,7 +231,7 @@ public class TreasureHuntActivity
 
     // Initialize 3D audio engine.
     cardboardAudioEngine =
-        new CardboardAudioEngine(this, CardboardAudioEngine.RenderingMode.BINAURAL_HIGH_QUALITY);
+            new CardboardAudioEngine(this, CardboardAudioEngine.RenderingMode.BINAURAL_HIGH_QUALITY);
   }
 
   @Override
@@ -250,7 +282,7 @@ public class TreasureHuntActivity
     cubeColors.position(0);
 
     ByteBuffer bbFoundColors =
-        ByteBuffer.allocateDirect(WorldLayoutData.CUBE_FOUND_COLORS.length * 4);
+            ByteBuffer.allocateDirect(WorldLayoutData.CUBE_FOUND_COLORS.length * 4);
     bbFoundColors.order(ByteOrder.nativeOrder());
     cubeFoundColors = bbFoundColors.asFloatBuffer();
     cubeFoundColors.put(WorldLayoutData.CUBE_FOUND_COLORS);
@@ -261,6 +293,12 @@ public class TreasureHuntActivity
     cubeNormals = bbNormals.asFloatBuffer();
     cubeNormals.put(WorldLayoutData.CUBE_NORMALS);
     cubeNormals.position(0);
+
+    ByteBuffer bbTexture = ByteBuffer.allocateDirect(WorldLayoutData.CUBE_TEXTURE_COORDINATES.length * 4);
+    bbTexture.order(ByteOrder.nativeOrder());
+    mCubeTextureCoordinates = bbTexture.asFloatBuffer();
+    mCubeTextureCoordinates.put(WorldLayoutData.CUBE_TEXTURE_COORDINATES);
+    mCubeTextureCoordinates.position(0);
 
     // make a floor
     ByteBuffer bbFloorVertices = ByteBuffer.allocateDirect(WorldLayoutData.FLOOR_COORDS.length * 4);
@@ -291,20 +329,39 @@ public class TreasureHuntActivity
     GLES20.glLinkProgram(cubeProgram);
     GLES20.glUseProgram(cubeProgram);
 
+    mTextureDataHandle = TextureHelper.loadTexture(this);
+
     checkGLError("Cube program");
 
     cubePositionParam = GLES20.glGetAttribLocation(cubeProgram, "a_Position");
     cubeNormalParam = GLES20.glGetAttribLocation(cubeProgram, "a_Normal");
     cubeColorParam = GLES20.glGetAttribLocation(cubeProgram, "a_Color");
+    mTextureCoordinateHandle = GLES20.glGetAttribLocation(cubeProgram, "a_TexCoordinate");
 
     cubeModelParam = GLES20.glGetUniformLocation(cubeProgram, "u_Model");
     cubeModelViewParam = GLES20.glGetUniformLocation(cubeProgram, "u_MVMatrix");
     cubeModelViewProjectionParam = GLES20.glGetUniformLocation(cubeProgram, "u_MVP");
     cubeLightPosParam = GLES20.glGetUniformLocation(cubeProgram, "u_LightPos");
+    mTextureUniformHandle = GLES20.glGetUniformLocation(cubeProgram, "u_Texture");
+
+    // Set the active texture unit to texture unit 0.
+    GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+
+    // Bind the texture to this unit.
+    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mTextureDataHandle);
+
+    // Tell the texture uniform sampler to use this texture in the shader by binding to texture unit 0.
+    GLES20.glUniform1i(mTextureUniformHandle, 0);
+
+    checkGLError("Cube program params");
 
     GLES20.glEnableVertexAttribArray(cubePositionParam);
     GLES20.glEnableVertexAttribArray(cubeNormalParam);
     GLES20.glEnableVertexAttribArray(cubeColorParam);
+
+
+    checkGLError("Cube program params");
+
 
     checkGLError("Cube program params");
 
@@ -345,11 +402,11 @@ public class TreasureHuntActivity
                 cardboardAudioEngine.preloadSoundFile(SOUND_FILE);
                 soundId = cardboardAudioEngine.createSoundObject(SOUND_FILE);
                 cardboardAudioEngine.setSoundObjectPosition(
-                    soundId, modelPosition[0], modelPosition[1], modelPosition[2]);
+                        soundId, modelPosition[0], modelPosition[1], modelPosition[2]);
                 cardboardAudioEngine.playSound(soundId, true /* looped playback */);
               }
             })
-        .start();
+            .start();
 
     updateModelPosition();
 
@@ -366,7 +423,7 @@ public class TreasureHuntActivity
     // Update the sound location to match it with the new cube position.
     if (soundId != CardboardAudioEngine.INVALID_ID) {
       cardboardAudioEngine.setSoundObjectPosition(
-          soundId, modelPosition[0], modelPosition[1], modelPosition[2]);
+              soundId, modelPosition[0], modelPosition[1], modelPosition[2]);
     }
     checkGLError("updateCubePosition");
   }
@@ -412,9 +469,13 @@ public class TreasureHuntActivity
     // Update the 3d audio engine with the most recent head rotation.
     headTransform.getQuaternion(headRotation, 0);
     cardboardAudioEngine.setHeadRotation(
-        headRotation[0], headRotation[1], headRotation[2], headRotation[3]);
-    // Regular update call to cardboard audio engine. 
+            headRotation[0], headRotation[1], headRotation[2], headRotation[3]);
+    // Regular update call to cardboard audio engine.
     cardboardAudioEngine.update();
+
+
+    checkGLError("colorParam");
+
 
     checkGLError("onReadyToDraw");
   }
@@ -430,6 +491,7 @@ public class TreasureHuntActivity
     GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
     checkGLError("colorParam");
+
 
     // Apply the eye transformation to the camera.
     Matrix.multiplyMM(view, 0, eye.getEyeView(), 0, camera, 0);
@@ -461,6 +523,8 @@ public class TreasureHuntActivity
   public void drawCube() {
     GLES20.glUseProgram(cubeProgram);
 
+
+
     GLES20.glUniform3fv(cubeLightPosParam, 1, lightPosInEyeSpace, 0);
 
     // Set the Model in the shader, used to calculate lighting
@@ -471,7 +535,7 @@ public class TreasureHuntActivity
 
     // Set the position of the cube
     GLES20.glVertexAttribPointer(
-        cubePositionParam, COORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, cubeVertices);
+            cubePositionParam, COORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, cubeVertices);
 
     // Set the ModelViewProjection matrix in the shader.
     GLES20.glUniformMatrix4fv(cubeModelViewProjectionParam, 1, false, modelViewProjection, 0);
@@ -479,7 +543,14 @@ public class TreasureHuntActivity
     // Set the normal positions of the cube, again for shading
     GLES20.glVertexAttribPointer(cubeNormalParam, 3, GLES20.GL_FLOAT, false, 0, cubeNormals);
     GLES20.glVertexAttribPointer(cubeColorParam, 4, GLES20.GL_FLOAT, false, 0,
-        isLookingAtObject() ? cubeFoundColors : cubeColors);
+            isLookingAtObject() ? cubeFoundColors : cubeColors);
+
+    // Pass in the texture coordinate information
+    mCubeTextureCoordinates.position(0);
+    GLES20.glVertexAttribPointer(mTextureCoordinateHandle, mTextureCoordinateDataSize, GLES20.GL_FLOAT, false,
+            0, mCubeTextureCoordinates);
+
+    GLES20.glEnableVertexAttribArray(mTextureCoordinateHandle);
 
     GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, 36);
     checkGLError("Drawing cube");
@@ -501,7 +572,7 @@ public class TreasureHuntActivity
     GLES20.glUniformMatrix4fv(floorModelViewParam, 1, false, modelView, 0);
     GLES20.glUniformMatrix4fv(floorModelViewProjectionParam, 1, false, modelViewProjection, 0);
     GLES20.glVertexAttribPointer(
-        floorPositionParam, COORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, floorVertices);
+            floorPositionParam, COORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, floorVertices);
     GLES20.glVertexAttribPointer(floorNormalParam, 3, GLES20.GL_FLOAT, false, 0, floorNormals);
     GLES20.glVertexAttribPointer(floorColorParam, 4, GLES20.GL_FLOAT, false, 0, floorColors);
 
@@ -518,6 +589,7 @@ public class TreasureHuntActivity
     Log.i(TAG, "onCardboardTrigger");
 
     if (isLookingAtObject()) {
+      impression = false;
       hideObject();
     }
 
@@ -540,7 +612,7 @@ public class TreasureHuntActivity
     Matrix.setRotateM(rotationMatrix, 0, angleXZ, 0f, 1f, 0f);
     float oldObjectDistance = objectDistance;
     objectDistance =
-        (float) Math.random() * (MAX_MODEL_DISTANCE - MIN_MODEL_DISTANCE) + MIN_MODEL_DISTANCE;
+            (float) Math.random() * (MAX_MODEL_DISTANCE - MIN_MODEL_DISTANCE) + MIN_MODEL_DISTANCE;
     float objectScalingFactor = objectDistance / oldObjectDistance;
     Matrix.scaleM(rotationMatrix, 0, objectScalingFactor, objectScalingFactor, objectScalingFactor);
     Matrix.multiplyMV(posVec, 0, rotationMatrix, 0, modelCube, 12);

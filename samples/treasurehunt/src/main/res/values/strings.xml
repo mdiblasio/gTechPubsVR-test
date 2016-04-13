@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Cardboard Sample</string>
+    <string name="app_name">VR Ads</string>
+    <string name="ad_request_button">Make Ad Request</string>
+    <string name="generate_opengl_button">Generate OpenGL Texture</string>
+    <string name="banner_ad_unit_id">/6076/mdiblasio/msc_playbook</string>
+    <string name="start_cardboard">Start Cardboard</string>
 </resources>
